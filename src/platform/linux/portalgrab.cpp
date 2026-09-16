@@ -818,34 +818,8 @@ namespace platf {
    * @return Portal display names, or an empty list when portal discovery fails.
    */
   std::vector<std::string> portal_display_names() {
-    std::vector<std::string> display_names;
-    auto dbus = std::make_shared<portal::dbus_t>();
-
-    if (dbus->init() < 0) {
-      BOOST_LOG(warning) << "[portalgrab] Failed to connect to dbus. Cannot enumerate displays, returning empty list.";
-      return {};
-    }
-
-    if (has_elevated_privileges(true)) {
-      // We're still in the probing phase of Sunshine startup. Dropping portal security early will break KMS.
-      // Just return a dummy screen for now. Display re-enumeration after encoder probing will yield full result.
-      display_names.emplace_back("init");
-      return display_names;
-    }
-
-    if (dbus->connect_to_portal() < 0) {
-      BOOST_LOG(warning) << "[portalgrab] Failed to connect to portal. Cannot enumerate displays, returning empty list.";
-      return {};
-    }
-
-    for (auto stream_ : dbus->pipewire_streams) {
-      BOOST_LOG(info) << "[portalgrab] Found stream for display id/name: '"sv << stream_.monitor_name << "' position: "sv << stream_.pos_x << "x"sv << stream_.pos_y << " resolution: "sv << stream_.width << "x"sv << stream_.height;
-      display_names.emplace_back(stream_.to_display_name());
-    }
-    // Release the portal session as soon as possible to properly release related resources early.
-    dbus.reset();
-
-    // Return currently active display names
-    return display_names;
+    // Window targets are selected interactively when capture starts.
+    // Avoid opening a second portal session just to enumerate them.
+    return {"window"};
   }
 }  // namespace platf
