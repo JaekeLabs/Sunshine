@@ -3174,8 +3174,20 @@ namespace video {
       encoder.av1.capabilities.reset();
     }
 
-    // Test HDR and YUV444 support
-    {
+    // Portal window capture prompts for a target on every display reset.
+    // Keep H.264/HEVC/AV1 viability probing, but don't repeatedly reopen
+    // the portal just to probe HDR/YUV444 capabilities.
+    if (config::video.capture == "portal") {
+      encoder.h264[encoder_t::YUV444] = false;
+      encoder.h264[encoder_t::DYNAMIC_RANGE] = false;
+      encoder.h264[encoder_t::DYNAMIC_RANGE_YUV444] = false;
+      encoder.hevc[encoder_t::YUV444] = false;
+      encoder.hevc[encoder_t::DYNAMIC_RANGE] = false;
+      encoder.hevc[encoder_t::DYNAMIC_RANGE_YUV444] = false;
+      encoder.av1[encoder_t::YUV444] = false;
+      encoder.av1[encoder_t::DYNAMIC_RANGE] = false;
+      encoder.av1[encoder_t::DYNAMIC_RANGE_YUV444] = false;
+    } else {
       auto test_yuv444 = [&](auto &flag_map, auto video_format) {
         const config_t config = {1920, 1080, 60, 6000, 1000, 1, 0, 1, video_format, 0, 1, 0};
 
