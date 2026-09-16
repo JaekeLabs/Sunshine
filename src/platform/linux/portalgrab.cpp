@@ -576,12 +576,11 @@ namespace portal {
       g_autoptr(GVariant) value = nullptr;
       g_variant_iter_init(&iter, streams);
       while (g_variant_iter_next(&iter, "(u@a{sv})", &out_pipewire_node, &value)) {
-        int out_width;
-        int out_height;
+        int out_width = 1;
+        int out_height = 1;
         bool result = g_variant_lookup(value, "size", "(ii)", &out_width, &out_height, nullptr);
         if (!result) {
-          BOOST_LOG(warning) << "[portalgrab] Ignoring stream without proper resolution on pipewire node "sv << out_pipewire_node;
-          continue;
+          BOOST_LOG(warning) << "[portalgrab] Stream has no portal size; using 1x1 negotiation placeholder on pipewire node "sv << out_pipewire_node;
         }
 
         int out_pos_x;
