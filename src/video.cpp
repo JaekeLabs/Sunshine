@@ -3514,6 +3514,13 @@ namespace video {
       BOOST_LOG(debug) << "ENCODER STATUS ACTIVE_AV1_MODE: "sv << active_av1_mode;
     }
 
+    // A successful portal encoder probe establishes the current render device.
+    // Prime Linux's re-enumeration tracker now so the first client connection
+    // doesn't mistake its initial empty state for a GPU change.
+    if (config::video.capture == "portal") {
+      (void) platf::needs_encoder_reenumeration();
+    }
+
     return 0;
   }
 
