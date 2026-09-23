@@ -212,6 +212,9 @@ namespace platf::dxgi {
       return -1;
     }
 
+    capture_width = capture_size.Width;
+    capture_height = capture_size.Height;
+
     // Privacy boundary: this prototype never falls back to monitor capture.
     // The WGC item is a window rather than a rotated DXGI output, so update the
     // dimensions inherited from display_base_t to match the captured Edge window.
@@ -315,6 +318,22 @@ namespace platf::dxgi {
     ReleaseSRWLockExclusive(&frame_lock);
     if (consumed_frame == nullptr) {  // spurious wakeup
       return capture_e::timeout;
+    }
+
+    // WGC frame-pool textures retain the pool's old dimensions until the pool
+    // is recreated, so the texture description alone cannot reliably detect a
+    // resized window. ContentSize reflects the actual captured window size.
+    // Ask Sunshine to rebuild the capture backend before forwarding a stale
+    // frame; init() will then create a new frame pool using the new Edge size.
+    const auto content_size = consumed_frame.ContentSize();
+    if (content_size.Width <= 0 || content_size.Height <= 0) {
+      release_frame();
+      return capture_e::timeout;
+    }
+    if (content_size.Width != capture_width || content_size.Height != capture_height) {
+      BOOST_LOG(info) << "Microsoft Edge capture size changed ["sv << capture_width << 'x' << capture_height << " -> "sv << content_size.Width << 'x' << content_size.Height << ']';
+      release_frame();
+      return capture_e::reinit;
     }
 
     auto capture_access = consumed_frame.Surface().as<winrt::IDirect3DDxgiInterfaceAccess>();
