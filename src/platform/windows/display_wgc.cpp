@@ -212,9 +212,9 @@ namespace platf::dxgi {
       return -1;
     }
 
-    // The WGC item is a window rather than a rotated DXGI output. Update the
-    // dimensions inherited from display_base_t so encoder buffers match the
-    // captured Edge window instead of the physical monitor.
+    // Privacy boundary: this prototype never falls back to monitor capture.
+    // The WGC item is a window rather than a rotated DXGI output, so update the
+    // dimensions inherited from display_base_t to match the captured Edge window.
     display->width = capture_size.Width;
     display->height = capture_size.Height;
     display->width_before_rotation = capture_size.Width;
