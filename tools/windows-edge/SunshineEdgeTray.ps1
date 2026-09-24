@@ -3,7 +3,7 @@ Add-Type -AssemblyName System.Drawing
 
 # Prevent multiple tray-controller instances.
 $CreatedNew = $false
-$TrayMutex = [System.Threading.Mutex]::new(
+$TrayMutex = New-Object System.Threading.Mutex(
     $true,
     'Local\SunshineEdgeTrayController',
     [ref]$CreatedNew
@@ -24,93 +24,93 @@ public static class NativeIcon
 }
 "@
 
-# Use traditional property getters for Windows PowerShell 5.1 Add-Type compatibility.
-Add-Type @"
+$RendererSource = @"
 using System.Drawing;
 using System.Windows.Forms;
 
-public class DarkMenuColors : ProfessionalColorTable
+public class DarkMenuRenderer : ToolStripRenderer
 {
     private readonly Color Background = Color.FromArgb(32, 32, 32);
     private readonly Color Selected   = Color.FromArgb(55, 55, 55);
+    private readonly Color Text       = Color.FromArgb(235, 235, 235);
+    private readonly Color Disabled   = Color.FromArgb(125, 125, 125);
     private readonly Color Border     = Color.FromArgb(70, 70, 70);
 
-    public override Color ToolStripDropDownBackground
-    {
-        get { return Background; }
-    }
-
-    public override Color MenuBorder
-    {
-        get { return Border; }
-    }
-
-    public override Color MenuItemBorder
+    // Public property avoids the harmless Add-Type warning about a type
+    // defining no public methods or properties.
+    public Color SelectionColor
     {
         get { return Selected; }
     }
 
-    public override Color MenuItemSelected
+    protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
     {
-        get { return Selected; }
+        using (SolidBrush brush = new SolidBrush(Background))
+        {
+            e.Graphics.FillRectangle(
+                brush,
+                new Rectangle(Point.Empty, e.ToolStrip.Size)
+            );
+        }
     }
 
-    public override Color MenuItemSelectedGradientBegin
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
     {
-        get { return Selected; }
+        Rectangle rect = new Rectangle(Point.Empty, e.Item.Size);
+
+        using (SolidBrush brush = new SolidBrush(
+            e.Item.Selected ? Selected : Background))
+        {
+            e.Graphics.FillRectangle(brush, rect);
+        }
     }
 
-    public override Color MenuItemSelectedGradientEnd
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
     {
-        get { return Selected; }
+        e.TextColor = e.Item.Enabled ? Text : Disabled;
+        base.OnRenderItemText(e);
     }
 
-    public override Color MenuItemPressedGradientBegin
+    protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
     {
-        get { return Selected; }
+        using (Pen pen = new Pen(Border))
+        {
+            int y = e.Item.Height / 2;
+            e.Graphics.DrawLine(pen, 4, y, e.Item.Width - 4, y);
+        }
     }
 
-    public override Color MenuItemPressedGradientMiddle
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
     {
-        get { return Selected; }
-    }
+        using (Pen pen = new Pen(Border))
+        {
+            Rectangle rect = new Rectangle(
+                0,
+                0,
+                e.ToolStrip.Width - 1,
+                e.ToolStrip.Height - 1
+            );
 
-    public override Color MenuItemPressedGradientEnd
-    {
-        get { return Selected; }
-    }
-
-    public override Color ImageMarginGradientBegin
-    {
-        get { return Background; }
-    }
-
-    public override Color ImageMarginGradientMiddle
-    {
-        get { return Background; }
-    }
-
-    public override Color ImageMarginGradientEnd
-    {
-        get { return Background; }
-    }
-
-    public override Color SeparatorDark
-    {
-        get { return Border; }
-    }
-
-    public override Color SeparatorLight
-    {
-        get { return Border; }
+            e.Graphics.DrawRectangle(pen, rect);
+        }
     }
 }
 "@
+
+$WinFormsAssembly = [System.Windows.Forms.Form].Assembly.Location
+$DrawingAssembly  = [System.Drawing.Color].Assembly.Location
+
+Add-Type -TypeDefinition $RendererSource `
+    -ReferencedAssemblies $WinFormsAssembly,$DrawingAssembly
 
 $SunshineDir  = 'C:\Tools\Sunshine-Edge'
 $SunshineExe  = Join-Path $SunshineDir 'sunshine.exe'
 $SunshineConf = Join-Path $SunshineDir 'config\sunshine.conf'
 $WebUI        = 'https://localhost:47990'
+
+$StartupDir      = [Environment]::GetFolderPath('Startup')
+$StartupShortcut = Join-Path $StartupDir 'Sunshine Edge Tray.lnk'
+$SilentLauncher  = Join-Path $SunshineDir 'SunshineEdgeTray.vbs'
 
 function Get-SunshineEdgeProcess {
     Get-Process -Name sunshine -ErrorAction SilentlyContinue |
@@ -227,6 +227,30 @@ function Set-StreamAudioEnabled {
     )
 }
 
+function Get-AutostartEnabled {
+    return Test-Path $StartupShortcut
+}
+
+function Set-AutostartEnabled {
+    param(
+        [bool]$Enabled
+    )
+
+    if ($Enabled) {
+        $Shell = New-Object -ComObject WScript.Shell
+        $Shortcut = $Shell.CreateShortcut($StartupShortcut)
+
+        $Shortcut.TargetPath = "$env:SystemRoot\System32\wscript.exe"
+        $Shortcut.Arguments = "`"$SilentLauncher`""
+        $Shortcut.WorkingDirectory = $SunshineDir
+        $Shortcut.IconLocation = "$SunshineExe,0"
+        $Shortcut.Save()
+    }
+    else {
+        Remove-Item $StartupShortcut -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function New-TintedIcon {
     param(
         [System.Drawing.Icon]$SourceIcon,
@@ -303,9 +327,7 @@ $Menu.ShowImageMargin = $false
 $Menu.ShowCheckMargin = $false
 $Menu.BackColor = [System.Drawing.Color]::FromArgb(32, 32, 32)
 $Menu.ForeColor = [System.Drawing.Color]::FromArgb(235, 235, 235)
-$Menu.Renderer = New-Object System.Windows.Forms.ToolStripProfessionalRenderer(
-    (New-Object DarkMenuColors)
-)
+$Menu.Renderer = New-Object DarkMenuRenderer
 
 $StartItem = $Menu.Items.Add('Start Sunshine Edge')
 $StopItem  = $Menu.Items.Add('Stop Sunshine Edge')
@@ -317,6 +339,10 @@ $Menu.Items.Add(
 $AudioItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $AudioItem.Text = 'Stream Audio'
 $Menu.Items.Add($AudioItem) | Out-Null
+
+$AutoStartItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$AutoStartItem.Text = 'Start with Windows'
+$Menu.Items.Add($AutoStartItem) | Out-Null
 
 $Menu.Items.Add(
     (New-Object System.Windows.Forms.ToolStripSeparator)
@@ -361,6 +387,13 @@ function Update-TrayState {
     }
     else {
         $AudioItem.Text = 'Stream Audio'
+    }
+
+    if (Get-AutostartEnabled) {
+        $AutoStartItem.Text = '✓  Start with Windows'
+    }
+    else {
+        $AutoStartItem.Text = 'Start with Windows'
     }
 }
 
@@ -425,6 +458,13 @@ $AudioItem.add_Click({
         $Notify.ShowBalloonTip(2500)
     }
 
+    Update-TrayState
+})
+
+$AutoStartItem.add_Click({
+    $NewState = -not (Get-AutostartEnabled)
+
+    Set-AutostartEnabled -Enabled $NewState
     Update-TrayState
 })
 
