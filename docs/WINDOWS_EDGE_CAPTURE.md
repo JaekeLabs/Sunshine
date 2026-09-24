@@ -249,6 +249,7 @@ Start Sunshine Edge
 Stop Sunshine Edge
 --------------------
 [check] Stream Audio
+[check] Start with Windows
 --------------------
 Open Sunshine Web UI
 Open Edge
@@ -262,6 +263,7 @@ Behavior:
 - **Stop Sunshine Edge** stops only the custom `C:\Tools\Sunshine-Edge\sunshine.exe` instance.
 - **Stream Audio** edits `stream_audio` in the custom `sunshine.conf`. If Sunshine is running, the controller restarts it so the new audio state takes effect.
 - The audio menu text displays a check mark when audio is enabled.
+- **Start with Windows** creates or removes the per-user Startup shortcut. This controls whether the tray controller itself launches automatically after sign-in; it does not autostart `sunshine.exe`.
 - **Open Sunshine Web UI** opens `https://localhost:47990`.
 - **Open Edge** launches Microsoft Edge.
 - Double-clicking the tray icon toggles custom Sunshine on/off.
@@ -270,7 +272,7 @@ Behavior:
 
 The controller uses the icon embedded in `sunshine.exe` and creates grayscale/off and orange/on variants at runtime.
 
-The menu uses a custom dark `ProfessionalColorTable`. The embedded C# intentionally uses traditional property getter syntax rather than expression-bodied `=>` properties so it compiles correctly through Windows PowerShell 5.1 `Add-Type`.
+The menu uses a custom `ToolStripRenderer` so Windows does not reintroduce the bright system-accent hover color. The tested renderer paints the menu background, selected-row background, text, separators, and border directly. The C# source is compiled with explicit references to the loaded WinForms and Drawing assemblies for Windows PowerShell 5.1 compatibility.
 
 ## Silent launcher
 
@@ -300,14 +302,16 @@ The per-user Startup shortcut is:
 %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Sunshine Edge Tray.lnk
 ```
 
-At Windows sign-in:
+When **Start with Windows** is enabled, Windows sign-in behaves as follows:
 
 1. `wscript.exe` launches the hidden tray script.
 2. The gray Sunshine icon appears.
-3. Sunshine itself remains off.
+3. Sunshine itself remains off; no `sunshine.exe` process is started.
 4. The user starts Sunshine explicitly from the tray when wanted.
 
-An optional Desktop `Sunshine Edge.lnk` points to the same VBS launcher, allowing the tray controller to be brought back after choosing **Exit Tray Controller** without rebooting.
+When **Start with Windows** is disabled, the Startup shortcut is removed and nothing from this custom setup starts automatically at sign-in.
+
+An optional Desktop `Sunshine Edge.lnk` points to the same VBS launcher, allowing the tray controller to be brought back after choosing **Exit Tray Controller** without rebooting. Choosing **Exit Tray Controller** stops the custom Sunshine instance first, so no custom Sunshine/tray process remains afterward.
 
 ## Build and CI history
 
@@ -337,12 +341,14 @@ If this installation needs to be reconstructed:
 5. Restore the custom `config` directory beside `sunshine.exe`.
 6. Confirm `capture = wgc`, `encoder = nvenc`, remote input disabled, `system_tray = disabled`, and `upnp = disabled`.
 7. Copy `tools/windows-edge/SunshineEdgeTray.ps1` and `.vbs` to `C:\Tools\Sunshine-Edge`.
-8. Create/update the Startup shortcut to launch the VBS file through `wscript.exe`.
+8. Launch the tray controller with the VBS helper and enable **Start with Windows** from the tray menu if automatic tray startup is desired.
 9. Keep the stock `SunshineService` stopped/manual.
 10. Open exactly one visible Edge window and test Moonlight.
 11. Test covering Edge with another local window to verify no desktop/application leakage.
 12. Resize Edge and confirm the capture reinitializes cleanly.
 13. Test the tray audio toggle in both states.
+14. Test the **Start with Windows** toggle by confirming the Startup shortcut is created/removed.
+15. Confirm hover selection in the dark tray menu is dark gray rather than the Windows accent color.
 
 ## Relationship to Halcyon
 
