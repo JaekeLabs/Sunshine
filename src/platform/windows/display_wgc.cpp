@@ -80,6 +80,77 @@ constexpr auto __mingw_uuidof<winrt::IDirect3DDxgiInterfaceAccess>() -> GUID con
 #endif
 
 namespace platf::dxgi {
+  namespace {
+    bool is_edge_capture_window(HWND window) {
+      if (!window || !IsWindowVisible(window) || IsIconic(window) || GetAncestor(window, GA_ROOT) != window) {
+        return false;
+      }
+
+      DWORD process_id = 0;
+      GetWindowThreadProcessId(window, &process_id);
+      if (process_id == 0) {
+        return false;
+      }
+
+      HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+      if (!process) {
+        return false;
+      }
+
+      wchar_t process_path[32768] {};
+      DWORD process_path_size = static_cast<DWORD>(sizeof(process_path) / sizeof(process_path[0]));
+      const bool queried = QueryFullProcessImageNameW(process, 0, process_path, &process_path_size) != FALSE;
+      CloseHandle(process);
+      if (!queried) {
+        return false;
+      }
+
+      const wchar_t *filename = process_path;
+      if (const wchar_t *slash = wcsrchr(process_path, L'\\')) {
+        filename = slash + 1;
+      }
+
+      return _wcsicmp(filename, L"msedge.exe") == 0;
+    }
+
+    struct edge_window_search_t {
+      HWND window = nullptr;
+      unsigned int count = 0;
+    };
+
+    BOOL CALLBACK enumerate_edge_capture_windows(HWND window, LPARAM context) {
+      auto *search = reinterpret_cast<edge_window_search_t *>(context);
+      if (is_edge_capture_window(window)) {
+        if (!search->window) {
+          search->window = window;
+        }
+        ++search->count;
+      }
+      return TRUE;
+    }
+
+    HWND find_edge_capture_window() {
+      const HWND foreground = GetForegroundWindow();
+      if (is_edge_capture_window(foreground)) {
+        return foreground;
+      }
+
+      edge_window_search_t search;
+      EnumWindows(enumerate_edge_capture_windows, reinterpret_cast<LPARAM>(&search));
+
+      if (search.count == 1) {
+        return search.window;
+      }
+
+      if (search.count > 1) {
+        BOOST_LOG(error) << "Multiple Microsoft Edge windows are open. Focus the window you want to stream, then reconnect."sv;
+      } else {
+        BOOST_LOG(error) << "No visible Microsoft Edge window is available for capture. Open Edge before starting or reconnecting the stream."sv;
+      }
+      return nullptr;
+    }
+  }  // namespace
+
   wgc_capture_t::wgc_capture_t() {
     InitializeConditionVariable(&frame_present_cv);
   }
@@ -122,15 +193,40 @@ namespace platf::dxgi {
       return -1;
     }
 
-    DXGI_OUTPUT_DESC output_desc;
     uwp_device = d3d_comhandle.as<winrt::IDirect3DDevice>();
-    display->output->GetDesc(&output_desc);
 
-    auto monitor_factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-    if (monitor_factory == nullptr || FAILED(status = monitor_factory->CreateForMonitor(output_desc.Monitor, winrt::guid_of<winrt::IGraphicsCaptureItem>(), winrt::put_abi(item)))) {
-      BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: failed to acquire display: [0x"sv << util::hex(status).to_string_view() << ']';
+    const HWND edge_window = find_edge_capture_window();
+    if (!edge_window) {
       return -1;
     }
+
+    auto capture_factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+    if (capture_factory == nullptr || FAILED(status = capture_factory->CreateForWindow(edge_window, winrt::guid_of<winrt::IGraphicsCaptureItem>(), winrt::put_abi(item)))) {
+      BOOST_LOG(error) << "Failed to create a Windows.Graphics.Capture item for Microsoft Edge: [0x"sv << util::hex(status).to_string_view() << ']';
+      return -1;
+    }
+
+    const auto capture_size = item.Size();
+    if (capture_size.Width <= 0 || capture_size.Height <= 0) {
+      BOOST_LOG(error) << "Microsoft Edge reported an invalid capture size ["sv << capture_size.Width << 'x' << capture_size.Height << ']';
+      return -1;
+    }
+
+    capture_width = capture_size.Width;
+    capture_height = capture_size.Height;
+
+    // Privacy boundary: this prototype never falls back to monitor capture.
+    // The WGC item is a window rather than a rotated DXGI output, so update the
+    // dimensions inherited from display_base_t to match the captured Edge window.
+    display->width = capture_size.Width;
+    display->height = capture_size.Height;
+    display->width_before_rotation = capture_size.Width;
+    display->height_before_rotation = capture_size.Height;
+    display->display_rotation = DXGI_MODE_ROTATION_IDENTITY;
+    display->offset_x = 0;
+    display->offset_y = 0;
+
+    BOOST_LOG(info) << "Capturing Microsoft Edge window ["sv << capture_size.Width << 'x' << capture_size.Height << ']';
 
     if (config.dynamicRange) {
       display->capture_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -222,6 +318,22 @@ namespace platf::dxgi {
     ReleaseSRWLockExclusive(&frame_lock);
     if (consumed_frame == nullptr) {  // spurious wakeup
       return capture_e::timeout;
+    }
+
+    // WGC frame-pool textures retain the pool's old dimensions until the pool
+    // is recreated, so the texture description alone cannot reliably detect a
+    // resized window. ContentSize reflects the actual captured window size.
+    // Ask Sunshine to rebuild the capture backend before forwarding a stale
+    // frame; init() will then create a new frame pool using the new Edge size.
+    const auto content_size = consumed_frame.ContentSize();
+    if (content_size.Width <= 0 || content_size.Height <= 0) {
+      release_frame();
+      return capture_e::timeout;
+    }
+    if (content_size.Width != capture_width || content_size.Height != capture_height) {
+      BOOST_LOG(info) << "Microsoft Edge capture size changed ["sv << capture_width << 'x' << capture_height << " -> "sv << content_size.Width << 'x' << content_size.Height << ']';
+      release_frame();
+      return capture_e::reinit;
     }
 
     auto capture_access = consumed_frame.Surface().as<winrt::IDirect3DDxgiInterfaceAccess>();

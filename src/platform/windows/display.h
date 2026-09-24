@@ -716,6 +716,8 @@ namespace platf::dxgi {
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame consumed_frame {nullptr};
     SRWLOCK frame_lock = SRWLOCK_INIT;
     CONDITION_VARIABLE frame_present_cv;
+    int32_t capture_width = 0;  ///< Current WGC item content width used to detect window resizing.
+    int32_t capture_height = 0;  ///< Current WGC item content height used to detect window resizing.
 
     void on_frame_arrived(winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool const &sender, winrt::Windows::Foundation::IInspectable const &);
 
